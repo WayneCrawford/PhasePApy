@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 import numpy as np
 from scipy.optimize import fmin
-from obspy.geodetics import gps2dist_azimuth
+from obspy.geodetics import locations2degrees, gps2dist_azimuth
 from datetime import datetime, timedelta
 from operator import itemgetter
 from itertools import combinations
@@ -59,11 +59,15 @@ class LocalAssociator():
 
     def id_candidate_events(self):
         """
-        Create candidate events.
+        Create candidate events based on S-P times.
+
+        - Get all stations with unassociated picks
+        - Condense picktimes within our pick uncertainty value
+        - Generate all possible candidate events
         """
         # now1 = time.time()
         #############
-        # Get all stations with unnassoiated picks
+        # Get all stations with unassociated picks
         stations = self.assoc_db.query(Pick.sta).\
             filter(Pick.assoc_id == None).distinct().all()
 
@@ -291,6 +295,9 @@ class LocalAssociator():
     def single_phase(self):
         """
         Associate stations with only S or P pick (not both)
+
+        Does this require existing associated events and/or candidates
+        based on S-P?
         """
         events = self.assoc_db.query(Associated).all()
         for event in events:
@@ -420,6 +427,7 @@ def datetime_statistics(dt_list, norm='L2'):
 def pick_cluster(session, picks, pickwindow, pickaveraging_norm, counter):
     r"""
     Cluster picks from different components on the same station.
+
                |    |                     /\
                |    |                    /  \          /\
                |    | /\      /\        /    \        /  \      /\
@@ -569,24 +577,28 @@ def locating(guess, *args):
     """"
     Locating function
 
+    Returns RMS of the distances between the guess and the args
     Sums the distance differences between the iterating guess distance and
-    circle radius; args format is (lon, lat, d_km, sta, delta)
+    circle radius
 
-    from obspy.core.util import gps2DistAzimuth
+    :guess: (lon, lat)
+    args: list of (sta, lon, lat, d_km, delta) tuples
     """
     L = len(args)
     residuals = 0
     i = 0
+    # Replacing by "for arg in args:"  would eliminate 6 lines!
     while True:
         # gps2DistAzimuth(lat1, lon1, lat2, lon2)
         # Returns: (Great circle distance in m,
         #           azimuth A->B in degrees,
         #           azimuth B->A in degrees)
-        residuals += (gps2dist_azimuth(
-            guess[1], guess[0], args[i][2], args[i][1])[0] / 1000 *
-            180 / (np.pi * 6371) - args[i][4])**2
+        # residuals += (gps2dist_azimuth(
+        #     guess[1], guess[0], args[i][2], args[i][1])[0] / 1000 *
+        #     180 / (np.pi * 6371) - args[i][4])**2
         # np.sqrt((guess[0]-args[i][1])**2+(guess[1]-args[i][2])**2)
         #         - args[i][4])**2
+        residuals += (residual(guess, args[i]))**2
         if i == L - 1:
             break
         else:
@@ -596,19 +608,19 @@ def locating(guess, *args):
 
 def residuals_minimum(location, args):
     """
-    Returns the minimum residual.
+    Return the minimum residual.
 
-    The only difference from the locating function is a * before args.
-
-    from obspy.core.util import gps2DistAzimuth
+    The only difference from locating() is that there is no * before args.
     """
     L = len(args)
     residuals = 0
     i = 0
+    # Replace by "for arg in args:"?
     while True:
-        residuals += (gps2dist_azimuth(
-            location[1], location[0], args[i][2], args[i][1])[0] / 1000 *
-            180 / (np.pi * 6371) - args[i][4])**2
+        residuals += (residual(location, args[i]))**2
+        # residuals += (gps2dist_azimuth(
+        #     location[1], location[0], args[i][2], args[i][1])[0] / 1000 *
+        #     180 / (np.pi * 6371) - args[i][4])**2
         if i == L - 1:
             break
         else:
@@ -620,15 +632,28 @@ def residual(location, args):
     """
     Return the residual
 
-    location is the median lon and lat,
-    args format is (lon, lat, d_km, sta, delta)
+    location is (lon_median, lat_median)
+    args format is (sta, lon, lat, d_km, delta)
+
+    uses obspy.geodetics.locations2degrees
     """
-    x = gps2dist_azimuth(location[1], location[0], args[2],
-                         args[1])[0] / 1000 * 180 / (np.pi * 6371) - args[4]
-    return x
+    # x = gps2dist_azimuth(location[1], location[0], args[2], args[1])[0]\
+    #     / 1000 * 180 / (np.pi * 6371) - args[4]
+    # return x
+
+    # offset_m = gps2dist_azimuth(location[1], location[0], args[2],
+    #                             args[1])[0]
+    # offset_deg = np.degrees(offset_m / 6371000)
+
+    offset_deg = locations2degrees(
+        location[1], location[0], args[2], args[1])[0]
+    return offset_deg - args[4]
 
 
 def outlier_cutoff(matches, location, cutoff_outlier):
+    """
+    Cuts of outliers, or defines the outlier cutoff?
+    """
     # 'tuple' object has no attribute 'remove', the matches passed in is
     # tuple, has to change to list
     matches = list(matches)
