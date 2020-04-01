@@ -14,10 +14,8 @@ c.chen8684@gmail.com) under the guidance of Austin Holland.
 Version 1.1: 2016	--	FBpicker, AICDpicker, KTpicker; 1D and 3D Associator
 
 The PhasePApy is a Seismic Phase Picker and Associator program package, which is 
-designed to identify and associate picks to the seismic events or microseismic events. 
-This work has currently been submitted for peer review. Please reference the paper in 
-review if you are using this code. Once the paper is published we will include the 
-full reference.
+designed to identify and associate picks of seismic microseismic events. 
+Please reference the paper if you use this code.
 
 The first version 1.0 has been used by Oklahoma Geological Survey (OGS) for near real
 time earthquake monitoring since 2014. Here, we only provide the version 1.1 to public,
@@ -42,6 +40,28 @@ The PhasePicker contains three pickers: FBpicker, AICDpicker, and KTpicker
 The Associator includes the 1D and 3D Associator modules which uses phase arrival look up
 tables to associate earthquakes. The associator was tested for local to regional earthquake
  P- and S-phases, but the algorithm can be accommodated for any distance and possibly phase.
+ 
+ Association is performed in the following steps:
+   # Create a TravelTime table
+   # Input picks to a Pick table
+     - There's no way to tell it the phase, it figures it out in the following steps
+   # Identify Candidates
+     - assocND.LocalAssociator.id_candidate_events() identifies as candidates
+       all of one stations Pick pairs that are offset by a value consistent with
+       the range of S-P times in the traveltime table
+     - Should maybe make another candidate builder that compares first arrivals
+       across stations?
+   # Associate Candidates
+     - assocND.LocalAssociator.associate_candidates compares the projected origin
+       times for all candidates: if there are more than `nsta_declare` stations
+       with origin times separated by less than `assoc_ot_uncert`, then an Association
+       is declared. I think there can be more than one Association (if there is
+       another good cluster at a different time)
+   # Add Single-Phase stations
+     - `assocND.LocalAssociator.single_phase()` adds in stations without a good
+       S-P time.  I haven't looked at this code yet.  I wonder if a final_stations
+       criteria wouldn't help for Lucky Strike, which may not have many good S-P
+       times but which often has a good set of P-phase 
 
 ## License
 PhasePApy is released as public domain under the Creative Commons Public Domain Dedication [CC0 1.0] (https://creativecommons.org/publicdomain/zero/1.0/legalcode). 

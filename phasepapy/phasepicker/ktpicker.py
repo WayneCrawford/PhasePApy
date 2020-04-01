@@ -6,7 +6,8 @@ import copy
 import numpy as np
 from obspy.core import UTCDateTime
 from .scnl import SCNL
-from .cf_kt import Kurtosis, rms, rolling_window
+from .cf_kt import Kurtosis
+from .util import rms, rolling_window
 
 
 class KTPicker():

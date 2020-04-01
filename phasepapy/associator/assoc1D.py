@@ -1,6 +1,9 @@
-from .tables1D import Base, BaseTT1D, Pick, PickModified, Candidate, Associated
-from .tt_stations_1D import Station1D, tt_s_p, TTtable1D, tt_km
-# from .func1D import *
+"""
+Create associations from Picks and Traveltime tables
+"""
+from .tables1D import Base, Pick, PickModified, Candidate, Associated
+from .tt_stations_1D import BaseTT1D, Station1D, TTtable1D
+from .func1D import tt_s_p, tt_km
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 import numpy as np
@@ -10,6 +13,7 @@ from datetime import datetime, timedelta
 from operator import itemgetter
 from itertools import combinations
 import logging
+import warnings
 
 
 class LocalAssociator():
@@ -20,17 +24,16 @@ class LocalAssociator():
                  aggr_norm='L2', assoc_ot_uncert=3, nsta_declare=3,
                  cutoff_outlier=30, loc_uncert_thresh=0.2):
         """
-        Parameters:
-        db_assoc: associator database
-        db_tt: travel time table database
-        max_km: maximum distance of S-P interval in distance
-        aggregation: the coefficient multiplied to minimum travel time
-        aggr_norm: L2: median; L1: mean
-        assoc_ot_uncert:  # of seconds between predicted origin times
-                          to associate candidate events
-        nsta_declare: minimum station number to declare a earthquake
-        cutoff_outlier: the outlier cut off distance in km
-        loc_uncert_thresh: location uncertainty in degree
+        :param db_assoc: associator database
+        :param db_tt: travel time table database
+        :param max_km: maximum distance of S-P interval in distance
+        :param aggregation: the coefficient multiplied to minimum travel time
+        :param aggr_norm: L2: median; L1: mean
+        :param assoc_ot_uncert:  # of seconds between predicted origin times
+                                 to associate candidate events
+        :param nsta_declare: minimum station number to declare a earthquake
+        :param cutoff_outlier: the outlier cut off distance in km
+        :param loc_uncert_thresh: location uncertainty in degree
         """
         engine_associator = create_engine(db_assoc, echo=False)
         engine_tt_stations_1D = create_engine(db_tt, echo=False)
@@ -57,41 +60,161 @@ class LocalAssociator():
         self.cutoff_outlier = cutoff_outlier
         self.loc_uncert_thresh = loc_uncert_thresh
 
-    def id_candidate_events(self):
+    def __repr__(self):
+        s = 'LocalAssociator({}, {}, {:g}, {:g}, "{}", '.format(
+            self.assoc_db, self.tt_stations_db_1D, self.max_km,
+            self.aggregation, self.aggr_norm)
+        s += '{:g}, {:d}, {:g}, {:g})'.format(
+            self.assoc_ot_uncert, self.nsta_declare, self.cutoff_outlier,
+            self.loc_uncert_thresh)
+        return s
+
+    def num_associated(self):
+        return self.assoc_db.query(Associated).count()
+
+    def num_candidates(self):
+        return self.assoc_db.query(Candidate).count()
+
+    def num_picks(self):
+        return self.assoc_db.query(Pick).count()
+
+    def num_pickmodifieds(self):
+        return self.assoc_db.query(PickModified).count()
+
+    def print_counts(self):
         """
-        Create candidate events based on S-P times.
+        Print the number of rows in the associator tables
+        """
+        print(f'{self.num_picks():2d} Picks, '
+              f'{self.num_pickmodifieds():2d} PickModifieds, '
+              f'{self.num_candidates():2d} Candidates, '
+              f'{self.num_associated():2d} Associated')
+              # f'{self.assoc_db.query(Associated).count():2d} Associated')
+
+    def print_tables(self, order_by='time'):
+        """
+        Print all associator database tables
+        
+        :param order_by: 'time' or 'id'
+        """
+        for type in ['Pick', 'PickModified', 'Candidate', 'Associated']:
+            self.print_table(type, order_by)
+
+    def print_table(self, type, order_by='time'):
+        """
+        Print database table
+        
+        :param type: 'Pick', 'PickModified', 'Candidate' or 'Associated'
+        :param order_by: 'time' or 'id'
+        """
+        if type == 'Pick':
+            basis = Pick
+            order_basis = basis.time
+        elif type == 'PickModified':
+            basis = PickModified
+            order_basis = basis.time
+        elif type == 'Candidate':
+            basis = Candidate
+            order_basis = basis.ot
+        elif type == 'Associated':
+            basis = Associated
+            order_basis = basis.ot
+        else:
+            print(f'{__name__}.LocalAssociator.print_table(): Invalid table type: "{type}"')
+            return
+        if order_by == 'id':
+            order_basis = basis.id
+        if self.assoc_db.query(basis).count():
+            print(type + 's are:')
+            first_time = True
+            for obj in self.assoc_db.query(basis).\
+                    order_by(order_basis):
+                if first_time:
+                     print(obj.__str__(table_header=True))
+                     first_time = False
+                print(obj.__str__(table_format=True))
+        else:
+            print('No ' + type + 's')
+
+    def print_associated(self, type, order_by='time'):
+        """
+        Print associated rows in a database table
+        
+        :param type: 'Pick', 'PickModified', or 'Candidate', will print
+                     Associated otherwise
+        :param order_by: 'time', 'id' or 'station'
+        """
+        if type == 'Pick':
+            basis = Pick
+            order_basis = basis.time
+        elif type == 'PickModified':
+            basis = PickModified
+            order_basis = basis.time
+        elif type == 'Candidate':
+            basis = Candidate
+            order_basis = basis.ot
+        else:
+            self.print_table('Associated')
+            return
+        if order_by == 'id':
+            order_basis = basis.id
+        if order_by == 'station':
+            order_basis = basis.sta
+        if self.assoc_db.query(basis).filter(basis.assoc_id != None).count():
+            print('Associated ' + type + 's are:')
+            first_time = True
+            for obj in self.assoc_db.query(basis).\
+                    filter(basis.assoc_id != None).\
+                    order_by(order_basis):
+                if first_time:
+                     print(obj.__str__(table_header=True))
+                     first_time = False
+                print(obj.__str__(table_format=True))
+        else:
+            print('No Associated' + type + 's')
+
+    def id_candidate_events(self, verbose=False):
+        """
+        Create candidate events based on possible S-P offsets.
 
         - Get all stations with unassociated picks
         - Condense picktimes within our pick uncertainty value
         - Generate all possible candidate events
         """
-        # now1 = time.time()
-        #############
         # Get all stations with unassociated picks
         stations = self.assoc_db.query(Pick.sta).\
             filter(Pick.assoc_id == None).distinct().all()
+        if verbose:
+            print("id_candidate_events: "
+                  f"{len(stations):d} stations with unassociated picks")
 
+        counter = 0  # WCC added and got rid of counter0 below
         for sta, in stations:  # the comma is needed
             picks = self.assoc_db.query(Pick).\
-                    filter(Pick.sta == sta).\
-                    filter(Pick.assoc_id == None).\
-                    order_by(Pick.time).all()
+                filter(Pick.sta == sta).\
+                filter(Pick.assoc_id == None).order_by(Pick.time).all()
             # Condense picktimes that are within our pick uncertainty value
             # picktimes are python datetime objects
-            if stations.index((sta, )) == 0:  # stupid tuple
-                counter0 = 0
-                picktimes_new, counter = pick_cluster(
-                        self.assoc_db, picks, self.aggr_window,
-                        self.aggr_norm, counter0)
-            else:
-                picktimes_new, counter = pick_cluster(
-                        self.assoc_db, picks,
-                        self.aggr_window, self.aggr_norm, counter)
+            # if stations.index((sta, )) == 0:  # stupid tuple
+            #     counter0 = 0
+            #     picktimes_new, counter = pick_cluster(
+            #             self.assoc_db, picks, self.aggr_window,
+            #             self.aggr_norm, counter0)
+            # else:
+            #     picktimes_new, counter = pick_cluster(
+            #             self.assoc_db, picks, self.aggr_window,
+            #             self.aggr_norm, counter)
+            temp, counter = pick_cluster(self.assoc_db, picks,
+                                         self.aggr_window,
+                                         self.aggr_norm, counter)
+                    
             picks_modified = self.assoc_db.query(PickModified).\
                 filter(PickModified.sta == sta).\
                 filter(PickModified.assoc_id == None).\
                 order_by(PickModified.time).all()
-
+            if verbose:
+                print('\tFound {:d} picks for station {}'.format(
+                    len(picks_modified), sta))
             # Generate all possible candidate events
             for i in range(0, len(picks_modified) - 1):
                 for j in range(i + 1, len(picks_modified)):
@@ -99,6 +222,8 @@ class LocalAssociator():
                            picks_modified[i].time).total_seconds()
                     if s_p <= self.max_s_p and s_p >= self.min_s_p:
                         tt, tt_uncert = tt_s_p(self.tt_stations_db_1D, s_p)
+                        if verbose:
+                            print('\t\tFound an S-P candidate: {:g} seconds'.format(s_p))
                         ot = picks_modified[i].time -\
                             timedelta(seconds=tt.p_tt)
                         new_candidate = Candidate(ot, sta, tt.d_km, tt.delta,
@@ -114,50 +239,58 @@ class LocalAssociator():
         """
         Associate all possible candidate events
 
-        by comparing the projected origin-times.
+        by comparing the projected origin-times
+        A cluster is all events whose origin times fall within
+        self.assoc_ot_uncert of each other
+        Association is declared if there are > self.nsta_declare stations in a cluster
         """
         # now2 = time.time()
+        Array = self.get_clusters(self.assoc_db, self.assoc_ot_uncert, True)
         dt_ot = timedelta(seconds=self.assoc_ot_uncert)
-
-        # Query all candidate ots
-        candidate_ots = self.assoc_db.query(Candidate).\
-            filter(Candidate.assoc_id == None).\
-            order_by(Candidate.ot).all()
-        L_ots = len(candidate_ots)
-        # print L_ots
-        Array = []
-        for i in range(L_ots):
-            cluster = self.assoc_db.query(Candidate).\
-                filter(Candidate.assoc_id == None).\
-                filter(Candidate.ot >= candidate_ots[i].ot).\
-                filter(Candidate.ot < (candidate_ots[i].ot + dt_ot)).\
-                order_by(Candidate.ot).all()
-            cluster_sta = self.assoc_db.query(Candidate.sta).\
-                filter(Candidate.assoc_id == None).\
-                filter(Candidate.ot >= candidate_ots[i].ot).\
-                filter(Candidate.ot < (candidate_ots[i].ot + dt_ot)).\
-                order_by(Candidate.ot).all()
-            l_cluster = len(set(cluster_sta))
-            Array.append((i, l_cluster, len(cluster)))
+        #
+        # # Query all candidate origin times
+        # candidate_ots = self.assoc_db.query(Candidate).\
+        #     filter(Candidate.assoc_id == None).\
+        #     order_by(Candidate.ot).all()
+        # L_ots = len(candidate_ots)
+        # # print L_ots
+        # Array = []
+        # for i in range(L_ots):
+        #     cluster = self.assoc_db.query(Candidate).\
+        #         filter(Candidate.assoc_id == None).\
+        #         filter(Candidate.ot >= candidate_ots[i].ot).\
+        #         filter(Candidate.ot < (candidate_ots[i].ot + dt_ot)).\
+        #         order_by(Candidate.ot).all()
+        #     cluster_sta = self.assoc_db.query(Candidate.sta).\
+        #         filter(Candidate.assoc_id == None).\
+        #         filter(Candidate.ot >= candidate_ots[i].ot).\
+        #         filter(Candidate.ot < (candidate_ots[i].ot + dt_ot)).\
+        #         order_by(Candidate.ot).all()
+        #     l_cluster = len(set(cluster_sta))
+        #     Array.append((i, l_cluster, len(cluster)))
         # print Array
-        # sort Array by l_cluster, notice Array has been changed
+        # sort Array by number of stations in cluster
         Array.sort(key=itemgetter(1), reverse=True)
         # print Array
 
         # print 'cluster analysis time:', time.time()-now2, 's'
 
         for i in range(len(Array)):
-            index = Array[i][0]
+            candidate_ot = Array[i][0]
+            # index = Array[i][0]
             if Array[i][1] >= self.nsta_declare:
                 candis = self.assoc_db.query(Candidate).\
                     filter(Candidate.assoc_id == None).\
-                    filter(Candidate.ot >= candidate_ots[index].ot).\
-                    filter(Candidate.ot < (candidate_ots[index].ot + dt_ot)).\
+                    filter(Candidate.ot >= candidate_ot).\
+                    filter(Candidate.ot < (candidate_ot + dt_ot)).\
                     order_by(Candidate.ot).all()
+                # candis = self.assoc_db.query(Candidate).\
+                #     filter(Candidate.assoc_id == None).\
+                #     filter(Candidate.ot >= candidate_ots[index].ot).\
+                #     filter(Candidate.ot < (candidate_ots[index].ot + dt_ot)).\
+                #     order_by(Candidate.ot).all()
 
-                # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-                # remove the candidates with the modified picks has been
-                # associated
+                # remove the candidates with associated modified picks 
                 picks_associated_id = list(set(
                     self.assoc_db.query(PickModified.id).
                     filter(PickModified.assoc_id != None).all()))
@@ -172,9 +305,6 @@ class LocalAssociator():
                     for j in sorted(set(index_candis), reverse=True):
                         del candis[j]
                 # print 'candis', candis
-                # remove the candidates with the modified picks has been
-                # associated
-                # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
                 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
                 # 1D Associator
@@ -292,22 +422,24 @@ class LocalAssociator():
             else:
                 break
 
-    def single_phase(self):
+    def single_phase(self, verbose=False):
         """
         Associate stations with only S or P pick (not both)
 
         Does this require existing associated events and/or candidates
         based on S-P?
         """
+        if verbose:
+            print(f'In {__name__}.LocalAssociator.single_phase()')
         events = self.assoc_db.query(Associated).all()
         for event in events:
             event_id = event.id
             ot = event.ot
-            # print event_id,ot
+            if verbose:
+                print(f'\tTesting event {event_id} at time {ot}')
 
-            # Pick phases that are between origintime and origintime+max_tt
+            # Make a list of stations that are already associated
             sta_assoc = []
-            # only associate single phase from stations without p-s pairs
             for sta, in self.assoc_db.query(PickModified.sta).\
                     filter(PickModified.assoc_id == event_id).\
                     distinct().all():
@@ -322,14 +454,15 @@ class LocalAssociator():
                     distinct().all():
                 station = self.tt_stations_db_1D.query(Station1D).\
                           filter(Station1D.sta == sta).first()
-                # print event.latitude,event.longitude,sta,station.latitude,\
-                # station.longitude
-                d_km = gps2dist_azimuth(event.latitude, event.longitude,
-                                        station.latitude,
-                                        station.longitude)[0]/1000.
+                d_km = gps2dist_azimuth(
+                    event.latitude, event.longitude,
+                    station.latitude, station.longitude)[0]/1000.
 
                 # only associate single phase from stations without p-s pairs
                 if (d_km < self.max_km) and (sta not in sta_assoc):
+                    if verbose:
+                        print(f'\t\tTesting Station {sta} at {d_km:.4g} km...',
+                              end='')
                     tt, d_diff = tt_km(self.tt_stations_db_1D, d_km)
 
                     picks_p = self.assoc_db.query(PickModified).\
@@ -341,10 +474,12 @@ class LocalAssociator():
                                (ot + timedelta(seconds=tt.p_tt +
                                 0.5 * self.aggr_window))).\
                         all()
-                    # print 'picks_p: ',picks_p, 'tt.p_tt: ',tt.p_tt
+                    # print('picks_p: ', picks_p, 'tt.p_tt: ', tt.p_tt)
                     # if there is more than one modified pick in the
                     # aggr_window range, only associate the first one
                     if picks_p:
+                        if verbose:
+                            print('P found...', end='')
                         modi_pick = picks_p[0]  # the first modified pick
                         modi_pick.phase = 'P'
                         modi_pick.assoc_id = event.id
@@ -370,6 +505,8 @@ class LocalAssociator():
                     # if there are more than one modified pick in the
                     # aggr_window range, only associate the first modified pick
                     if picks_s:
+                        if verbose:
+                            print('S found...', end='')
                         modi_pick = picks_s[0]  # the first modified pick
                         modi_pick.phase = 'S'
                         modi_pick.assoc_id = event.id
@@ -382,6 +519,10 @@ class LocalAssociator():
                             pick.phase = 'S'
                             pick.assoc_id = event.id
                             pick.locate_flag = None
+                    if verbose:
+                        print()
+                    if picks_p or picks_s:
+                        event.nsta += 1
             self.assoc_db.commit()
 
     def comb(self, tt):
@@ -408,6 +549,31 @@ class LocalAssociator():
         # only return combinations of different stations
         return cb
 
+    @staticmethod
+    def get_clusters(assoc_db, assoc_ot_uncert, only_unassociated):
+        """
+        Identify and return clusters among Candidates in the database
+        
+        :param assoc_db: associater database session
+        :param assoc_ot_uncert: max difference in origin time within a cluster
+        :param only_unassociated: only test unassociated Candidates
+        :returns: Array of clusters: row = [origin_time, n_sta, n_picks]
+        """
+        dt_ot = timedelta(assoc_ot_uncert)
+        candidate_base = assoc_db.query(Candidate)
+        if only_unassociated:
+            candidate_base = candidate_base.filter(Candidate.assoc_id == None)
+        # Get ordered candidate origin times
+        candidate_ots = [c.ot for c in candidate_base.order_by(Candidate.ot).all()]
+        Array = []
+        for candidate_ot in candidate_ots:
+            cluster = candidate_base.\
+                filter(Candidate.ot >= candidate_ot).\
+                filter(Candidate.ot < (candidate_ot + dt_ot)).\
+                order_by(Candidate.ot).all()
+            cluster_stas = set([c.sta for c in cluster])
+            Array.append((candidate_ot, len(cluster_stas), len(cluster)))
+        return Array
 
 def datetime_statistics(dt_list, norm='L2'):
     """
@@ -425,27 +591,33 @@ def datetime_statistics(dt_list, norm='L2'):
 
 
 def pick_cluster(session, picks, pickwindow, pickaveraging_norm, counter):
-    r"""
+    """
     Cluster picks from different components on the same station.
 
-               |    |                     /\
-               |    |                    /  \          /\
-               |    | /\      /\        /    \        /  \      /\
-      _________|/\__|/  \    /  \      /      \      /    \    /  \  /\_____
-               |    |    \  /    \    /        \    /      \  /    \/
-               |    |     \/      \  /          \  /        \/
-               |    |              \/            \/
-     pickwindow:          ----
-     STA1 E   -----------|----|--------------------|--------------
-     STA1 N   ------------|-------------------------|-------------
-     STA1 Z   -------------|-------------------------|------------
-     stack    -----------|||--|--------------------|||------------
-     cluster STA1 --------|---|---------------------|-------------
-    chen highly recommends using norm=='L2' to lower the effect of outliers
-
-    ARGUE: whether only take the median or mean of the picks from different
-    stations? won't count the followings after first one
+    :param session:
+    :param picks:
+    :param pickwindow:
+    :param pickaveraging_norm:
+    :param counter:
     """
+    #               |    |                     /\
+    #               |    |                    /  \          /\
+    #               |    | /\      /\        /    \        /  \      /\
+    #         ______|/\__|/  \    /  \      /      \      /    \    /  \  /\___
+    #               |    |    \  /    \    /        \    /      \  /    \/
+    #               |    |     \/      \  /          \  /        \/
+    #               |    |              \/            \/
+    # pickwindow:    ----
+    # STA1 E     ---|----|--------------------|--------------
+    # STA1 N     ----|-------------------------|-------------
+    # STA1 Z     -----|-------------------------|------------
+    # stack      ---|||--|--------------------|||------------
+    # cluster STA1 --|---|---------------------|-------------
+    # Chen highly recommends using norm=='L2' to lower the effect of outliers
+    # Better to set pickwindow==t_up, t_up is to clean closed picks
+    # ARGUE: whether to only take the median or mean of the picks from
+    #        different stations? won't count the followings after first one
+
     picks_new = []
     # only one pick in picks
     if len(picks) == 1:
@@ -582,28 +754,29 @@ def locating(guess, *args):
     circle radius
 
     :guess: (lon, lat)
-    args: list of (sta, lon, lat, d_km, delta) tuples
+    :*args: list of (sta, lon, lat, d_km, delta) tuples
     """
-    L = len(args)
     residuals = 0
-    i = 0
-    # Replacing by "for arg in args:"  would eliminate 6 lines!
-    while True:
-        # gps2DistAzimuth(lat1, lon1, lat2, lon2)
-        # Returns: (Great circle distance in m,
-        #           azimuth A->B in degrees,
-        #           azimuth B->A in degrees)
-        # residuals += (gps2dist_azimuth(
-        #     guess[1], guess[0], args[i][2], args[i][1])[0] / 1000 *
-        #     180 / (np.pi * 6371) - args[i][4])**2
-        # np.sqrt((guess[0]-args[i][1])**2+(guess[1]-args[i][2])**2)
-        #         - args[i][4])**2
-        residuals += (residual(guess, args[i]))**2
-        if i == L - 1:
-            break
-        else:
-            i += 1
-    return np.sqrt(residuals / L)
+    for arg in args:
+        residuals += (residual(guess, arg))**2
+    # # The following is the original version (does same thing)
+    # L = len(args)
+    # i = 0
+    # while True:
+    #     # gps2DistAzimuth(lat1, lon1, lat2, lon2)
+    #     # Returns: (Great circle distance in m,
+    #     #           azimuth A->B in degrees,
+    #     #           azimuth B->A in degrees)
+    #     residuals += (gps2dist_azimuth(
+    #         guess[1], guess[0], args[i][2], args[i][1])[0] / 1000 *
+    #         180 / (np.pi * 6371) - args[i][4])**2
+    #     # np.sqrt((guess[0]-args[i][1])**2+(guess[1]-args[i][2])**2)
+    #     #         - args[i][4])**2
+    #     if i == L - 1:
+    #         break
+    #     else:
+    #         i += 1
+    return np.sqrt(residuals / len(args))
 
 
 def residuals_minimum(location, args):
@@ -612,20 +785,21 @@ def residuals_minimum(location, args):
 
     The only difference from locating() is that there is no * before args.
     """
-    L = len(args)
     residuals = 0
-    i = 0
-    # Replace by "for arg in args:"?
-    while True:
-        residuals += (residual(location, args[i]))**2
-        # residuals += (gps2dist_azimuth(
-        #     location[1], location[0], args[i][2], args[i][1])[0] / 1000 *
-        #     180 / (np.pi * 6371) - args[i][4])**2
-        if i == L - 1:
-            break
-        else:
-            i += 1
-    return np.sqrt(residuals / L)
+    for arg in args:
+        residuals += (residual(location, arg))**2
+    # # The following is the original version
+    # L = len(args)
+    # i = 0
+    # while True:
+    #     residuals += (gps2dist_azimuth(
+    #         location[1], location[0], args[i][2], args[i][1])[0] / 1000 *
+    #         180 / (np.pi * 6371) - args[i][4])**2
+    #     if i == L - 1:
+    #         break
+    #     else:
+    #         i += 1
+    return np.sqrt(residuals / len(args))
 
 
 def residual(location, args):
@@ -645,8 +819,8 @@ def residual(location, args):
     #                             args[1])[0]
     # offset_deg = np.degrees(offset_m / 6371000)
 
-    offset_deg = locations2degrees(
-        location[1], location[0], args[2], args[1])[0]
+    offset_deg = locations2degrees(location[1], location[0],
+                                   args[2], args[1])
     return offset_deg - args[4]
 
 

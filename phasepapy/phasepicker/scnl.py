@@ -33,10 +33,35 @@ class SCNL():
                 raise SCNL_InputError("List input has %d fields minimum of 3 required" % (len(input)))
       
     def __repr__(self):
-        return self.__str__()
+        s = 'SCNL("'
+        if self.station:
+            s += self.station
+        s += '.'
+        if self.channel:
+            s += self.channel
+        s += '.'
+        if self.network:
+            s += self.network
+        s += '.'
+        if self.location:
+            s += self.location
+        s += '")'
+        return s
       
     def __str__(self):
-        return "%s.%s.%s.%s" % (self.station,self.channel,self.network,self.location)
+        s = ''
+        if self.station:
+            s += self.station
+        s += '.'
+        if self.channel:
+            s += self.channel
+        s += '.'
+        if self.network:
+            s += self.network
+        s += '.'
+        if self.location:
+            s += self.location
+        return s
     
     def to_winston(self):
         if self.location==None or self.location=='--':

@@ -1,3 +1,13 @@
+"""
+Define traveltime tables:
+:TTtable1D: id, distance_km, delta_degrees, p_traveltime, s_traveltime,
+            s_p_time
+:Station1D: id, station, network, location, latitide, longitude, elevation,
+            starttime, endtime
+
+Station is same for 1D and 3D
+
+"""
 from sqlalchemy import (Column, Integer, Float, DateTime, String)
 from sqlalchemy.ext.declarative import declarative_base
 
