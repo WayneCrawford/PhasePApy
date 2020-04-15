@@ -347,12 +347,13 @@ class KTSummary():
             plt.text((picks[i] - self.tr.stats.starttime),
                      max(self.tr) - 0.3 * (max(self.tr) - min(self.tr)),
                      '%s' % (self.pol[i]), color='black')
+        plt.ylabel(self.tr.id)
         plt.xlabel('Time (s)')
         plt.show()
 
     def plot_summary(self):
         """
-        Plot CF.
+        Plot characteristic function and picks.
         """
         matplotlib.rcParams["axes.labelsize"] = "large"
         matplotlib.rcParams["axes.linewidth"] = 2.0
@@ -366,11 +367,19 @@ class KTSummary():
         plt.figure(figsize=(12, 8))
         dt = self.stats.delta
         t = np.arange(0, self.stats.npts / self.stats.sampling_rate, dt)
+        scnl, picks, trigger, snr = self.pick_ident()
 
         # Plot raw data
         ax = plt.subplot(2, 1, 1)
         ax.plot(t, self.tr, c='gray')
-        plt.ylabel('Raw Data')
+        for i in range(len(picks)):
+            plt.plot([(picks[i] - self.tr.stats.starttime),
+                      (picks[i] - self.tr.stats.starttime)],
+                     [min(self.tr), max(self.tr)], 'k--')
+            plt.text((picks[i] - self.tr.stats.starttime),
+                     max(self.tr) - 0.3 * (max(self.tr) - min(self.tr)),
+                     '%s' % (self.pol[i]), color='black')
+        plt.ylabel(scnl.__str__())
 
         # Plot summary
         ax1 = plt.subplot(2, 1, 2)
@@ -389,7 +398,7 @@ class KTSummary():
         #   ax.text((picks[i]-self.tr.stats.starttime),0.5,
         #           '%s' % (self.pol[i]),color='red')
 
-        plt.xlabel('Time (s)')
+        plt.xlabel(f'Time (s) after {self.tr.stats.starttime}')
         # plt.title('CF')
         plt.tight_layout()
         plt.show()

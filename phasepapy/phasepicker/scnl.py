@@ -1,3 +1,5 @@
+from obspy.core.event.base import WaveformStreamID
+
 class SCNL():
     """
     Station:Channel:Network:Location Class 
@@ -23,7 +25,7 @@ class SCNL():
             self.network = None
             self.location = None
         if type(input) is str:
-            self.parse_scnlstr(input)
+            self._parse_scnlstr(input)
         if type(input) is list:
             if len(input)==4:
                 self.station, self.channel, self.network, self.location = input
@@ -63,11 +65,24 @@ class SCNL():
             s += self.location
         return s
     
+    @classmethod
+    def from_waveformstreamID(cls, wid):
+        """Input obspy waveformID"""
+        return cls([wid.station_code, wid.channel_code, wid.network_code,
+                    wid.location_code])
+        
     def to_winston(self):
         if self.location==None or self.location=='--':
             return "%s$%s$%s" % (self.station,self.channel,self.network)
         else:
             return "%s$%s$%s$%s" % (self.station,self.channel,self.network,self.location)
+        
+    def to_waveformstreamID(self):
+        """Returns an obspy waveformID"""
+        return WaveformStreamID(station_code=self.station,
+                                channel_code=self.channel,
+                                network_code=self.network,
+                                location_code=self.location)
         
     def to_ewscnl(self):
         if self.location==None or self.location=='--':
@@ -81,15 +96,15 @@ class SCNL():
         else:
             return "%s.%s.%s.%s." % (self.station,self.channel,self.network,self.location) 
              
-    def parse_scnlstr(self,scnl_str):
+    def _parse_scnlstr(self,scnl_str):
         if re.search('\.',scnl_str):
             # Looks like an earthworm delimited scnl
-            self.from_ew(scnl_str)
+            self._parse_ew(scnl_str)
         if re.search('\$',scnl_str):
             # Looks like a winston scnl
-            self.from_winston(scnl_str)
+            self._parse_winston(scnl_str)
   
-    def from_ew(self,scnl_str):
+    def _parse_ew(self,scnl_str):
         """
         Input earthworm string (station.channel.network.location)
         """
@@ -99,7 +114,7 @@ class SCNL():
         self.network=scnl[2]
         self.location=scnl[3]
     
-    def from_winston(self,scnl_str):
+    def _parse_winston(self,scnl_str):
         """
         Input winston string (station$channel$network[$location])
         """

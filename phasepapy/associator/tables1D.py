@@ -12,10 +12,17 @@ Define database tables:
              latitude, longitude, location_uncertainty,
              num_stations, creation_time, update_time
 """
+from datetime import datetime
+from obspy.core.event.origin import Pick as obspy_Pick
+# from obspy.core import UTCDateTime
 
 from sqlalchemy import (Column, Integer, String, DateTime, Float,
                         Boolean)
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
+
+from .misc import isoformat_digits
 from ..phasepicker.scnl import SCNL
 Base = declarative_base()
 
@@ -94,6 +101,40 @@ class Pick(Base):
             s += ' + assoc_id="{}" '.format(self.assoc_id)
         return s
 
+    @classmethod
+    def from_obspy(cls, pick):
+        """
+        Make a Pick from an obspy Pick object
+        
+        TODO: estimate snr and uncert from pick uncertainties
+        :param pick: obspy Pick
+        """
+        scnl = SCNL.from_waveformstreamID(pick.waveform_id)
+        polarity = _polarity_from_obspy(pick.polarity)
+        if pick.onset == "impulsive":
+            snr = 8
+        elif pick.onset == "emergent":
+            snr = 4
+        elif pick.onset == "questionable":
+            snr = 2
+        else:
+            snr = 4
+        uncert = pick.time_errors.uncertainty
+        # snr, uncert = 8, 0.2
+        return cls(scnl, pick.time.datetime, polarity, snr,
+                   uncert, datetime.utcnow())
+    
+    def to_obspy(self):
+        """
+        return obspy Pick
+        """
+        # return obspy_Pick(time=UTCDateTime(self.time),
+        return obspy_Pick(time=self.time,
+                          phase_hint=self.phase,
+                          method_id='phasepy',
+                          waveform_id=self.scnl.to_waveformstreamID(),
+                          polarity=_polarity_to_obspy(self.polarity))
+
     def __str__(self, time_digits=2, table_format=False, table_header=False,
                 include_create_update=False):
         """
@@ -115,16 +156,16 @@ class Pick(Base):
                            'phase', 'assoc_id', 'modified_id')
         elif table_format:
             fmt = " {:5d} | {:22s} | {:^14s} | {:8s} | {:8.2f} | {:8.2f} | {:5s} | {:8s} | {:8s}"
-            s = fmt.format(self.id, _isoformat_digits(self.time, time_digits),
+            s = fmt.format(self.id, isoformat_digits(self.time, time_digits),
                           SCNL([self.sta, self.chan, self.net, self.loc]).__str__(),
                           self.polarity, self.snr, self.uncert, phase_wd,
                           assoc_wd, modified_wd)
         else: 
             s = "Pick({}, '{}', '{}', '{}', '{}', '{}')".format(
                 SCNL([self.sta, self.chan, self.net, self.loc]),
-                _isoformat_digits(self.time, time_digits),
+                isoformat_digits(self.time, time_digits),
                 self.polarity, self.snr, self.uncert,
-                _isoformat_digits(self.t_create, time_digits))
+                isoformat_digits(self.t_create, time_digits))
             if self.phase:
                 s += ' + phase="{}"'.format(self.phase)
             if self.modified_id:
@@ -132,6 +173,10 @@ class Pick(Base):
             if self.assoc_id:
                 s += ' + assoc_id="{}" '.format(self.assoc_id)
         return s
+        
+    @property
+    def scnl(self):
+        return SCNL([self.sta, self.chan, self.net, self.loc])
 
 
 class PickModified(Base):
@@ -158,9 +203,9 @@ class PickModified(Base):
         :param net: network name
         :param loc: location code
         :param picktime: phase pick time (DateTime?)
-        :paraam phase: "P" or "S"?  (Pn and Sn too?)
+        :param phase: "P" or "S"?  (Pn and Sn too?)
         :param uncert: Pick uncertainty? (seconds?)
-        :param assoc_id): ID of linked Associated()
+        :param assoc_id: ID of linked Associated()
         """
         self.sta = sta
         self.chan = chan
@@ -173,8 +218,7 @@ class PickModified(Base):
         self.assoc_id = assoc_id
 
     def __repr__(self):
-        fmt = "PickModified('{}', '{}', '{}', '{}', '{}',"
-        fmt += " '{}', '{}', {}, '{}')"
+        fmt = "PickModified('{}', '{}', '{}', '{}', '{}', '{}', {}, {})"
         return fmt.format(self.sta, self.chan, self.net, self.loc,
                           self.time.isoformat(), self.phase, self.error,
                           self.assoc_id)
@@ -195,18 +239,33 @@ class PickModified(Base):
             s = fmt.format('id', 'time', 'SCNL', 'uncert', 'phase', 'assoc_id')
         elif table_format:
             fmt = " {:5d} | {:22s} | {:^14s} | {:8.2f} | {:5s} | {:8s}"
-            s = fmt.format(self.id, _isoformat_digits(self.time, time_digits),
+            s = fmt.format(self.id, isoformat_digits(self.time, time_digits),
                            SCNL([self.sta, self.chan, self.net,
                                 self.loc]).__str__(),
                            self.error, phase_wd, assoc_wd)
         else: 
-            fmt = "PickModified('{}', '{}', '{}', '{}', '{}',"
-            fmt += " '{}', '{}', {}, '{}')"
+            fmt = "PickModified('{}', '{}', '{}', '{}', '{}', '{}', {}, {})"
             return fmt.format(self.sta, self.chan, self.net, self.loc,
-                              _isoformat_digits(self.time, time_digits),
+                              isoformat_digits(self.time, time_digits),
                               self.phase, self.error, self.assoc_id)
             s = self.__repr__()
         return s
+
+    @property
+    def scnl(self):
+        return SCNL([self.sta, self.chan, self.net, self.loc])
+
+    def to_obspy(self):
+        """
+        return obspy Pick
+        
+        TODO: get polarity from original pick
+        """
+        # return obspy_Pick(time=UTCDateTime(self.time),
+        return obspy_Pick(time=self.time,
+                          phase_hint=self.phase,
+                          method_id='phasepy',
+                          waveform_id=self.scnl.to_waveformstreamID())
 
 
 class Candidate(Base):
@@ -277,7 +336,7 @@ class Candidate(Base):
             else:
                 assoc_wd = '-'
             fmt = " {:5d} | {:22s} | {:^9s} | {:8.3f} | {:8.3f} | {:8.3f} | {:8.3f} | {:8s}"
-            s = fmt.format(self.id, _isoformat_digits(self.ot, time_digits),
+            s = fmt.format(self.id, isoformat_digits(self.ot, time_digits),
                           self.sta, self.d_km, self.delta,
                           (self.tp - self.ot).total_seconds(),
                           (self.ts - self.tp).total_seconds(),
@@ -286,7 +345,7 @@ class Candidate(Base):
             fmt = "Candidate(ot={}, sta='{}', d_km={:.2f}, delta={:.2f},"\
                 " tp=ot+{:." + str(time_digits) + "f}s,"\
                 " ts=tp+{:." + str(time_digits) + "f}s)"
-            return fmt.format(_isoformat_digits(self.ot, time_digits), self.sta,
+            return fmt.format(isoformat_digits(self.ot, time_digits), self.sta,
                               self.d_km, self.delta,
                               (self.tp - self.ot).total_seconds(),
                               (self.ts - self.tp).total_seconds())
@@ -391,39 +450,46 @@ class Associated(Base):
                 s += fmt.format('t_create', 't_update')
         elif table_format:
             fmt = " {:5d} | {:22s} | {:9.2f} | {:8.3f} | {:8.3f} | {:10.3f} | {:4d}"
-            s = fmt.format(self.id, _isoformat_digits(self.ot, time_digits),
+            s = fmt.format(self.id, isoformat_digits(self.ot, time_digits),
                           self.ot_uncert, self.latitude, self.longitude,
                           self.loc_uncert, self.nsta)
             if include_create_update:
                 s += " | {:15s} | {:15s})".format(
-                    _isoformat_digits(self.t_create, 0),
-                    _isoformat_digits(self.t_update, 0))
+                    isoformat_digits(self.t_create, 0),
+                    isoformat_digits(self.t_update, 0))
         else: 
             fmt = "Associated({}, {:.2f}, {:.3f}, {:.3f}, {:.3f}, {:d}"
-            s = fmt.format(_isoformat_digits(self.ot, time_digits),
+            s = fmt.format(isoformat_digits(self.ot, time_digits),
                           self.ot_uncert, self.latitude, self.longitude,
                           self.loc_uncert, self.nsta)
             if include_create_update:
                 s += ", {}, {})".format(
-                    _isoformat_digits(self.t_create, 0),
-                    _isoformat_digits(self.t_update, 0))
+                    isoformat_digits(self.t_create, 0),
+                    isoformat_digits(self.t_update, 0))
             else:
                 s += ")"
         return s
 
 
-def _isoformat_digits(time, digits):
-    """
-    return datetime as isoformat with specified digits after decimal
-    
-    :param digits: 0-6
-    """
-    s = time.strftime('%Y-%m-%dT%H:%M:%S')
-    digits = int(digits)
-    if digits <= 0:
-        return s
-    if digits > 6:
-        digits = 6
-    fmt='.{:0' + str(digits) + 'd}'
-    s += fmt.format(int(time.microsecond * 10**(digits-6)))
-    return s
+def make_assoc_session(url):
+    """Make a ORM session from a sqlalchemy database URL"""
+    engine = create_engine(url, echo=False)
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)
+    return session()
+
+def _polarity_to_obspy(polarity):
+    if polarity == 'C':
+        return 'positive'
+    elif polarity == 'D':
+        return 'negative'
+    else:
+        return 'undecidable'
+
+def _polarity_from_obspy(polarity):
+    if polarity == 'positive':
+        return 'C'
+    elif polarity == 'negative':
+        return 'D'
+    else:
+        return ''

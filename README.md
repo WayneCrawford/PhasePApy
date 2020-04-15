@@ -59,9 +59,7 @@ tables to associate earthquakes. The associator was tested for local to regional
        another good cluster at a different time)
    - Add Single-Phase stations
      - `assocND.LocalAssociator.single_phase()` adds in stations without a good
-       S-P time.  I haven't looked at this code yet.  I wonder if a final_stations
-       criteria wouldn't help for Lucky Strike, which may not have many good S-P
-       times but which often has a good set of P-phase 
+       S-P time. 
 
 ## License
 PhasePApy is released as public domain under the Creative Commons Public Domain Dedication [CC0 1.0] (https://creativecommons.org/publicdomain/zero/1.0/legalcode). 

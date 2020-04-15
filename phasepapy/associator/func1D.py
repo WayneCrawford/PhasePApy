@@ -1,5 +1,8 @@
 """
 Find traveltime table rows closest to requested distance or S-P offset
+
+These should be made obsolete by the interpolating functions of the same
+name in assoc1D.py
 """
 from .tt_stations_1D import TTtable1D
 
@@ -41,3 +44,4 @@ def tt_s_p(session, s_p):
         return min, abs(min.s_p - s_p)
     else:
         return max, abs(max.s_p - s_p)
+
